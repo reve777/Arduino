@@ -1,0 +1,349 @@
+/*
+  RFID, LCD, Button, Buzeer
+  LCD 畫面
+  (M:0 查看餘額) 按下 button
+  +----------------+
+  |           M:0  |
+  |Bal:$0          |
+  +----------------+
+
+  (M:0 查看餘額) 刷卡
+  +----------------+
+  |A1B2C3D4E5 M:0  |
+  |Bal:$180        |
+  +----------------+
+
+  (M:1 消費) 按下 button
+  +----------------+
+  |           M:1  |
+  |Msg:      Fee:30| (30元固定)
+  +----------------+
+
+  (M:1 消費) 刷卡
+  +----------------+
+  |A1B2C3D4E5 M:1  |
+  |Msg:OK    Fee:30| Msg:OK/Fail
+  +----------------+
+
+  (M:2 儲值) 按下 button
+  +----------------+
+  |           M:2  |
+  |Msg:     Add:0  | (0 初始資料或前一次的資料)
+  +----------------+
+
+  (M:2 儲值) 從主控台輸入數字
+  +----------------+
+  |           M:2  |
+  |Msg:     Add:50 | (不超過200)
+  +----------------+
+
+  (M:3 儲值) 刷卡
+  +----------------+
+  |A1B2C3D4E5 M:2  |
+  |Msg:OK   Add:50 | Msg:OK/Fail
+  +----------------+
+*/
+#include <SPI.h>
+#include <RFID.h>
+#define RST_PIN 9
+#define SDA_PIN 10
+#define BUZEER_PIN 8
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+LiquidCrystal_I2C lcd(0x27, 16, 2); // 0x27 or 0x3F
+
+RFID rfid (SDA_PIN, RST_PIN);
+String cardId = "";
+
+// 驗證資料(block id: 11)
+unsigned char keyA[16] {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xff, 0x07, 0x80, 0x69, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+int data_blockId = 9;
+int key_blockId = 11;
+int bonus = 0; // 加值
+int fee = 30; // 費用
+const int BUTTON_PIN = 5;
+int btn= 0;
+void setup() {
+Serial.begin(9600);
+  delay(2);
+  SPI.begin();
+  rfid.init();
+  
+  lcd.begin();
+  lcd.backlight();
+  lcd.clear();
+  pinMode(BUTTON_PIN, INPUT);
+
+  Serial.println("Ready");
+//------初始畫面
+  lcd.setCursor(13, 0);
+  lcd.print("m:0"); // 16 個空白
+  lcd.setCursor(0, 1);
+  lcd.print("Bal:$0");
+  Serial.println(btn);
+}
+
+  
+void loop() {
+  
+  int buttonState = digitalRead(BUTTON_PIN);
+   switch(btn){
+    case 0:
+      
+    if(buttonState == 1) {
+      ++btn;
+       Serial.println(btn);
+        
+    }
+      query(); 
+     break;
+    case 1:
+       if(buttonState == 1) {
+      ++btn;
+      Serial.println(btn);
+    } 
+     cost();
+     break;
+     case 2:
+       if(buttonState == 1) {
+      ++btn;
+       Serial.println(btn);
+       
+    }
+      add();
+     break;
+      case 3:
+       if(buttonState == 1) {
+       
+       btn=0;
+    }
+    Serial.println(btn);
+     break;
+  }
+
+ delay(200);
+
+}
+void query(){
+    if (rfid.isCard() && rfid.readCardSerial()) {
+    tone(BUZEER_PIN, 976, 200)  ;
+    cardId = "";
+    for (int i = 0; i < 5; i++) {
+      cardId += String(rfid.serNum[i], HEX);
+    }
+    lcd.setCursor(0, 0);
+    lcd.print(cardId);
+    lcd.setCursor(13, 0);
+    lcd.print("M:");
+    lcd.println(btn);
+    // 回傳卡片內容
+    int card_size = rfid.SelectTag(rfid.serNum);
+  }
+  //--------------------------------------------------------
+  // 授權驗證
+  unsigned char status = rfid.auth(PICC_AUTHENT1A, key_blockId, keyA, rfid.serNum);
+  if (status == MI_OK) {
+//    Serial.println("Auth pass");
+    // 讀取餘額
+    unsigned char readData[16];
+    status = rfid.read(data_blockId, readData); // 將資料讀取到 readDate 陣列
+    if (status == MI_OK) {
+      int balance = readData[15];
+      lcd.setCursor(0, 1);
+      lcd.print("Bal:$");
+       lcd.setCursor(5, 1);
+      lcd.print(balance);
+       lcd.setCursor(8, 1);
+      lcd.println("         ");
+      Serial.println(balance);
+    } else {
+      lcd.println("Read error");
+    }
+    Serial.println("-------------------------------");
+  }
+  rfid.halt(); // 進入休眠
+  delay(500);
+}
+
+void add(){
+//      lcd.setCursor(0, 0);
+//      lcd.print("             ");
+//      lcd.setCursor(13, 0);
+//      lcd.print("M:"); 
+//      lcd.print(btn);
+      lcd.setCursor(0, 1);
+      lcd.print("Mag:");
+      lcd.setCursor(4, 1);
+      lcd.print("    ");
+      lcd.setCursor(9, 1);
+      lcd.print("Add:");
+      lcd.println("   ");
+   while(Serial.available() > 0) {
+    // 注意 ! 使用 readString() 會稍慢且有明顯的 delay 感
+    String data = Serial.readString();
+    bonus = data.toInt();
+    Serial.print("bonus: ");
+    Serial.println(bonus);
+      lcd.setCursor(0, 1);
+      lcd.print("Mag:");
+      lcd.setCursor(4, 1);
+      lcd.print("    ");
+      lcd.setCursor(9, 1);
+      lcd.print("Add:");
+      lcd.println(bonus);
+  }
+  
+  
+  if (rfid.isCard() && rfid.readCardSerial()) {
+    tone(BUZEER_PIN, 976, 200)  ;
+    Serial.println("Card found");
+    cardId = "";
+    for (int i = 0; i < 5; i++) {
+      cardId += String(rfid.serNum[i], HEX);
+    }
+    lcd.setCursor(0, 0);
+    lcd.print(cardId);
+    lcd.setCursor(13, 0);
+    lcd.print("M:");
+    lcd.println(btn);
+    
+    Serial.print("Card id: ");
+    Serial.println(cardId);
+    // 回傳卡片內容
+    int card_size = rfid.SelectTag(rfid.serNum);
+    Serial.print("Card size: ");
+    Serial.print(card_size);
+    Serial.println("K bits");
+    Serial.println();
+  }
+  //--------------------------------------------------------
+  // 授權驗證
+  unsigned char status = rfid.auth(PICC_AUTHENT1A, key_blockId, keyA, rfid.serNum);
+  if (status == MI_OK) {
+    Serial.println("Auth pass");
+    // 讀取餘額
+    unsigned char readData[16];
+    status = rfid.read(data_blockId, readData); // 將資料讀取到 readDate 陣列
+    if (status == MI_OK) {
+      int balance = readData[15];
+      lcd.setCursor(0, 1);
+      lcd.print("Mag:");
+      Serial.print("Read ok: $");
+      Serial.println(balance, DEC);
+
+      
+      // 判斷餘額是否足夠 ?
+      if((balance+bonus) < 255) {
+        balance += bonus;
+        // 回寫資料
+        readData[15] = balance;
+        status = rfid.write(data_blockId, readData);
+        if (status == MI_OK) {
+            Serial.println("Update balance success");  
+        } else {
+            Serial.println("Update balance error");  
+        }
+        Serial.print("Read balance again: $");
+        lcd.print("Ok");
+        Serial.println(balance, DEC);
+      } else {
+        lcd.print("Fail");
+        Serial.println("Balance overflow!");
+        delay(500);
+        
+        tone(BUZEER_PIN, 1500, 200)  ;
+        delay(200);
+        tone(BUZEER_PIN, 1500, 200)  ;
+        delay(200);
+        tone(BUZEER_PIN, 1500, 200)  ;
+      }
+    } else {
+      Serial.println("Read error");
+    }
+    Serial.println("-------------------------------");
+  }
+  rfid.halt(); // 進入休眠
+  delay(500);
+}
+void cost(){
+      lcd.setCursor(0, 0);
+      lcd.print("             ");
+      lcd.setCursor(13, 0);
+      lcd.print("M:"); 
+      lcd.print(btn);
+      lcd.setCursor(0, 1);
+      lcd.print("Mag:");
+      lcd.setCursor(4, 1);
+      lcd.print("     ");
+      lcd.setCursor(10, 1);
+      lcd.println("Fee:30");
+//--------------------------------------      
+  if (rfid.isCard() && rfid.readCardSerial()) {
+    tone(BUZEER_PIN, 976, 200)  ;
+    Serial.println("Card found");
+    cardId = "";
+    for (int i = 0; i < 5; i++) {
+      cardId += String(rfid.serNum[i], HEX);
+    }
+    lcd.setCursor(0, 0);
+    lcd.print(cardId);
+    lcd.setCursor(13, 0);
+    lcd.print("M:");
+    lcd.println(btn);
+//    Serial.print("Card id: ");
+//    Serial.println(cardId);
+    // 回傳卡片內容
+    int card_size = rfid.SelectTag(rfid.serNum);
+//    Serial.print("Card size: ");
+//    Serial.print(card_size);
+//    Serial.println("K bits");
+//    Serial.println();
+  }
+  //--------------------------------------------------------
+  // 授權驗證
+  unsigned char status = rfid.auth(PICC_AUTHENT1A, key_blockId, keyA, rfid.serNum);
+  if (status == MI_OK) {
+    Serial.println("Auth pass");
+    // 讀取餘額
+    unsigned char readData[16];
+    status = rfid.read(data_blockId, readData); // 將資料讀取到 readDate 陣列
+    if (status == MI_OK) {
+      int balance = readData[15];
+      lcd.setCursor(0, 1);
+      lcd.print("Mag:");
+      
+      Serial.print("Read ok: $");
+      Serial.println(balance, DEC);
+      Serial.print("Fee: $");
+      Serial.println(fee, DEC);
+      // 判斷餘額是否足夠 ?
+      if(balance >= fee) {
+        balance -= fee;
+        // 回寫資料
+        readData[15] = balance;
+        status = rfid.write(data_blockId, readData);
+        if (status == MI_OK) {
+            Serial.println("Update balance success");  
+        } else {
+            Serial.println("Update balance error");  
+        }
+        Serial.print("Read balance again: $");
+        lcd.print("Ok");
+        Serial.println(balance, DEC);
+      } else {
+         lcd.print("Fail");
+        Serial.println("Not enough");  
+      }
+    } else {
+        lcd.print("Fail");
+      Serial.println("Read error");
+    }
+    
+       lcd.setCursor(10, 1);
+      lcd.println("Fee:30");
+    Serial.println("-------------------------------");
+  }
+  rfid.halt(); // 進入休眠
+  delay(500);
+}
